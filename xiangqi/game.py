@@ -23,8 +23,13 @@ class Game:
         self.moves: list[dict] = []
         self._line: Counter = Counter([self._key()])
 
-    def _key(self) -> tuple[str, str]:
-        return ("".join(self.position.board), self.position.side_to_move)
+    def _key(self) -> str:
+        return "".join(self.position.board) + self.position.side_to_move
+
+    @property
+    def seen_positions(self) -> Counter:
+        """对局中出现过的局面计数（键 = 棋盘串+走子方），供搜索避免长打。"""
+        return self._line
 
     @property
     def result(self) -> tuple[str, str] | None:

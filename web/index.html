@@ -552,6 +552,12 @@ const XQ = (() => {
   // ---- 估值与搜索（与 Python 版同构）----
   const MATE = 100000;
   const VALUES = { R: 900, N: 400, C: 450, P: 100, A: 200, B: 200, K: 0 };
+  // 各兵种按行的位置分（红方视角，row 0 = 黑方底线），列上叠加中心奖励
+  const ROW_BONUS = {
+    N: [4, 12, 18, 16, 14, 10, 6, 4, 2, 0],
+    R: [14, 18, 12, 10, 12, 12, 6, 4, 4, 6],
+    C: [6, 4, 10, 8, 10, 8, 4, 2, 2, 0],
+  };
   const PST = (() => {
     const pst = {};
     for (const kind of Object.keys(VALUES)) {
@@ -559,13 +565,15 @@ const XQ = (() => {
       for (let s = 0; s < 90; s++) {
         const r = (s / 9) | 0, c = s % 9;
         const center = 4 - Math.abs(c - 4);
-        const advance = 9 - r;
         let v = 0;
-        if (kind === "P") v = r <= 4 ? 20 + advance * 10 + center * 5 : advance * 2;
-        else if (kind === "N") v = center * 4 + (r <= 4 ? 10 : 0);
-        else if (kind === "C") v = center * 2;
-        else if (kind === "R") v = center * 2 + (r <= 4 ? 10 : 0);
-        else if (kind === "K") v = r === 9 ? 8 : 0;
+        if (kind === "N") v = ROW_BONUS.N[r] + center * 5;
+        else if (kind === "R") v = ROW_BONUS.R[r] + center * 2;
+        else if (kind === "C") v = ROW_BONUS.C[r] + (c === 4 ? 12 : center * 2);
+        else if (kind === "P") {
+          if (r === 0) v = 15;
+          else if (r <= 4) v = 25 + (4 - r) * 12 + center * 5;
+          else v = r === 5 ? 8 : 0;
+        } else if (kind === "K") v = r === 9 ? 10 : r === 8 ? 2 : -8;
         table.push(v);
       }
       pst[kind] = table;
@@ -588,11 +596,17 @@ const XQ = (() => {
 
   class Timeout extends Error {}
 
+  const keyOf = (pos) => pos.board.join("") + pos.sideToMove;
+
   class Searcher {
-    constructor(pos, deadline) {
+    constructor(pos, deadline, history) {
       this.pos = pos;
       this.deadline = deadline;
+      this.history = history; // Map key -> 出现次数（对局历史）
+      this.path = new Set();  // 当前搜索路径上的局面
       this.tt = new Map();
+      this.killers = new Map();
+      this.histScore = new Map();
       this.nodes = 0;
     }
 
@@ -606,17 +620,26 @@ const XQ = (() => {
       return this.pos.sideToMove === RED ? score : -score;
     }
 
-    ordered(moves, ttMove) {
+    ordered(moves, ttMove, ply) {
       const board = this.pos.board;
+      const killers = this.killers.get(ply) || [];
       const key = (m) => {
         if (m === ttMove) return -1e9;
         const captured = board[mvTo(m)];
         if (captured !== ".") {
-          return -(VALUES[captured.toUpperCase()] * 10 - VALUES[board[mvFrom(m)].toUpperCase()]);
+          return -(1e6 + VALUES[captured.toUpperCase()] * 10 - VALUES[board[mvFrom(m)].toUpperCase()]);
         }
-        return 0;
+        if (killers.includes(m)) return -1e5;
+        return -(this.histScore.get(m) || 0);
       };
       return moves.map((m) => [key(m), m]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+    }
+
+    recordQuietCutoff(m, depth, ply) {
+      const killers = this.killers.get(ply) || [null, null];
+      if (killers[0] !== m) { killers[1] = killers[0]; killers[0] = m; }
+      this.killers.set(ply, killers);
+      this.histScore.set(m, (this.histScore.get(m) || 0) + depth * depth);
     }
 
     qsearch(alpha, beta) {
@@ -625,9 +648,11 @@ const XQ = (() => {
       if (stand >= beta) return stand;
       alpha = Math.max(alpha, stand);
       const board = this.pos.board;
-      const captures = this.pos.legalMoves().filter((m) => board[mvTo(m)] !== ".");
-      for (const m of this.ordered(captures, null)) {
+      const us = this.pos.sideToMove;
+      const captures = this.pos.pseudoMoves().filter((m) => board[mvTo(m)] !== ".");
+      for (const m of this.ordered(captures, null, -1)) {
         const undo = this.pos.makeMove(m);
+        if (this.pos.inCheck(us)) { this.pos.unmakeMove(undo); continue; }
         let score;
         try {
           score = -this.qsearch(-beta, -alpha);
@@ -642,7 +667,9 @@ const XQ = (() => {
 
     negamax(depth, alpha, beta, ply) {
       this.tick();
-      const key = this.pos.board.join("") + this.pos.sideToMove;
+      const key = keyOf(this.pos);
+      if (ply > 0 && (this.path.has(key) || this.history.has(key))) return 0; // 重复局面按和棋
+
       const entry = this.tt.get(key);
       const ttMove = entry ? entry[3] : null;
       if (entry && entry[0] >= depth) {
@@ -651,59 +678,80 @@ const XQ = (() => {
         if (flag === 1 && score >= beta) return score;
         if (flag === 2 && score <= alpha) return score;
       }
-      if (depth === 0) return this.qsearch(alpha, beta);
+      if (depth <= 0) return this.qsearch(alpha, beta);
 
-      const moves = this.pos.legalMoves();
-      if (moves.length === 0) return -(MATE - ply); // 将死与困毙同为负
-
+      const us = this.pos.sideToMove;
       let best = -MATE * 2;
       let bestMove = null;
       const originalAlpha = alpha;
-      for (const m of this.ordered(moves, ttMove)) {
-        const undo = this.pos.makeMove(m);
-        let score;
-        try {
-          score = -this.negamax(depth - 1, -beta, -alpha, ply + 1);
-        } finally {
-          this.pos.unmakeMove(undo);
+      let foundLegal = false;
+      this.path.add(key);
+      try {
+        for (const m of this.ordered(this.pos.pseudoMoves(), ttMove, ply)) {
+          const undo = this.pos.makeMove(m);
+          if (this.pos.inCheck(us)) { this.pos.unmakeMove(undo); continue; }
+          foundLegal = true;
+          let score;
+          try {
+            const ext = ply < 32 && this.pos.inCheck() ? 1 : 0; // 将军延伸
+            score = -this.negamax(depth - 1 + ext, -beta, -alpha, ply + 1);
+          } finally {
+            this.pos.unmakeMove(undo);
+          }
+          if (score > best) { best = score; bestMove = m; }
+          alpha = Math.max(alpha, score);
+          if (alpha >= beta) {
+            if (this.pos.board[mvTo(m)] === ".") this.recordQuietCutoff(m, depth, ply);
+            break;
+          }
         }
-        if (score > best) { best = score; bestMove = m; }
-        alpha = Math.max(alpha, score);
-        if (alpha >= beta) break;
+      } finally {
+        this.path.delete(key);
       }
+
+      if (!foundLegal) return -(MATE - ply); // 将死与困毙同为负
+
       const flag = best >= beta ? 1 : best <= originalAlpha ? 2 : 0;
       this.tt.set(key, [depth, best, flag, bestMove]);
       return best;
     }
 
     root(depth) {
-      const moves = this.pos.legalMoves();
-      const key = this.pos.board.join("") + this.pos.sideToMove;
+      const key = keyOf(this.pos);
       const entry = this.tt.get(key);
       const ttMove = entry ? entry[3] : null;
+      const us = this.pos.sideToMove;
       let best = -MATE * 2;
-      let bestMove = moves[0];
+      let bestMove = null;
       let alpha = -MATE * 2;
       const beta = MATE * 2;
-      for (const m of this.ordered(moves, ttMove)) {
-        const undo = this.pos.makeMove(m);
-        let score;
-        try {
-          score = -this.negamax(depth - 1, -beta, -alpha, 1);
-        } finally {
-          this.pos.unmakeMove(undo);
+      this.path.add(key);
+      try {
+        for (const m of this.ordered(this.pos.pseudoMoves(), ttMove, 0)) {
+          const undo = this.pos.makeMove(m);
+          if (this.pos.inCheck(us)) { this.pos.unmakeMove(undo); continue; }
+          let score;
+          try {
+            score = -this.negamax(depth - 1, -beta, -alpha, 1);
+          } finally {
+            this.pos.unmakeMove(undo);
+          }
+          if (score > best) { best = score; bestMove = m; }
+          alpha = Math.max(alpha, score);
         }
-        if (score > best) { best = score; bestMove = m; }
-        alpha = Math.max(alpha, score);
+      } finally {
+        this.path.delete(key);
       }
       this.tt.set(key, [depth, best, 0, bestMove]);
       return [best, bestMove];
     }
   }
 
-  function search(pos, { timeLimit = 2.0, maxDepth = 32 } = {}) {
-    if (pos.legalMoves().length === 0) return null;
-    const searcher = new Searcher(pos, Date.now() + timeLimit * 1000);
+  function search(pos, { timeLimit = 2.0, maxDepth = 32, history = null } = {}) {
+    const fallback = pos.legalMoves();
+    if (fallback.length === 0) return null;
+    const hist = history instanceof Map ? history : new Map(Object.entries(history || {}));
+    const searcher = new Searcher(pos, Date.now() + timeLimit * 1000, hist);
     let result = null;
     for (let depth = 1; depth <= maxDepth; depth++) {
       let score, move;
@@ -713,14 +761,14 @@ const XQ = (() => {
         if (e instanceof Timeout) break;
         throw e;
       }
-      result = { move, score, depth, nodes: searcher.nodes };
+      if (move != null) result = { move, score, depth, nodes: searcher.nodes };
       if (score > MATE - 1000) break;
     }
-    return result ?? { move: pos.legalMoves()[0], score: 0, depth: 0, nodes: searcher.nodes };
+    return result ?? { move: fallback[0], score: 0, depth: 0, nodes: searcher.nodes };
   }
 
   return {
-    RED, BLACK, START_FEN, Position, perft, evaluate, search, MATE,
+    RED, BLACK, START_FEN, Position, perft, evaluate, search, MATE, keyOf,
     toNotation, notationMap, mv, mvFrom, mvTo,
   };
 })();
@@ -1076,7 +1124,12 @@ const XQ = (() => {
     state.thinking = true;
     renderStatus();
     const gen = state.generation;
-    const options = DIFFICULTY[diffSel.value];
+    const history = {};
+    for (let p = 0; p <= state.plies.length; p++) {
+      const key = XQ.keyOf(Position.fromFen(fenAt(p)));
+      history[key] = (history[key] || 0) + 1;
+    }
+    const options = { ...DIFFICULTY[diffSel.value], history };
     const w = ensureWorker();
     if (w) {
       w.postMessage({ fen: pos.toFen(), options, gen });

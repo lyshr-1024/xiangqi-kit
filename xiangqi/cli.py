@@ -111,7 +111,7 @@ def _cmd_ai(args: argparse.Namespace) -> int:
     game = _load(args.name)
     if game.result is not None:
         raise ValueError("棋局已结束")
-    result = search(game.position, time_limit=args.time)
+    result = search(game.position, time_limit=args.time, history=game.seen_positions)
     notation = to_notation(game.position, result.move)
     game.move(notation)
     game.save(_game_path(args.name))
