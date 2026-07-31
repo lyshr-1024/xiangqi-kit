@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""xq — 象棋 CLI 入口。优先用同目录 vendored 的引擎（安装形态），否则用仓库里的。"""
+import os
+import sys
+
+here = os.path.dirname(os.path.abspath(__file__))
+for candidate in (here, os.path.dirname(here)):
+    if os.path.isdir(os.path.join(candidate, "xiangqi")):
+        sys.path.insert(0, candidate)
+        break
+
+from xiangqi.cli import main
+
+sys.exit(main())
