@@ -84,6 +84,19 @@ def _cmd_fen(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_svg(args: argparse.Namespace) -> int:
+    from xiangqi.svg import render_svg
+
+    game = _load(args.name)
+    last = game.moves[-1] if game.moves else None
+    svg = render_svg(game.position, last_move=(last["from"], last["to"]) if last else None)
+    path = Path(args.out) if args.out else _game_path(args.name).parent.parent / "boards" / f"{args.name}.svg"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(svg)
+    print(path.resolve())
+    return 0
+
+
 def _cmd_history(args: argparse.Namespace) -> int:
     notations = [m["notation"] for m in _load(args.name).moves]
     for i in range(0, len(notations), 2):
@@ -130,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     add("undo", _cmd_undo, "悔一步棋")
     add("legal", _cmd_legal, "列出所有合法着法")
     add("fen", _cmd_fen, "输出当前 FEN")
+    p_svg = add("svg", _cmd_svg, "导出当前局面 SVG，输出文件路径")
+    p_svg.add_argument("--out", help="输出路径（默认 $XIANGQI_HOME/boards/<name>.svg）")
     add("history", _cmd_history, "显示棋谱")
 
     args = parser.parse_args(argv)
