@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中国象棋</title>
+</head>
+<body>
+<!-- 引擎块：主线程、Web Worker（经 textContent 提取）、Node perft 测试三方共用 -->
+<script id="engine">
+"use strict";
+const XQ = (() => {
+  const RED = "w", BLACK = "b";
+  const START_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+  const PIECES = new Set("rnbakcpRNBAKCP");
+  const ORTHO = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  const DIAG = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+  const HORSE = [[-2, -1], [-2, 1], [2, -1], [2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2]];
+  const ELEPHANT = [[-2, -2], [-2, 2], [2, -2], [2, 2]];
+
+  const isRedPiece = (pc) => pc !== "." && pc === pc.toUpperCase();
+  const inPalace = (r, c, red) => c >= 3 && c <= 5 && (red ? r >= 7 : r <= 2);
+  // 走法编码为整数 from*90+to
+  const mv = (frm, to) => frm * 90 + to;
+  const mvFrom = (m) => (m / 90) | 0;
+  const mvTo = (m) => m % 90;
+
+  class Position {
+    constructor(board, sideToMove = RED, halfmoveClock = 0, fullmoveNumber = 1) {
+      this.board = board;
+      this.sideToMove = sideToMove;
+      this.halfmoveClock = halfmoveClock;
+      this.fullmoveNumber = fullmoveNumber;
+    }
+
+    static fromFen(fen) {
+      const fields = fen.trim().split(/\s+/);
+      if (fields.length < 2) throw new Error(`FEN 字段不足: ${fen}`);
+      const rows = fields[0].split("/");
+      if (rows.length !== 10) throw new Error(`FEN 应有 10 行: ${fen}`);
+      const board = [];
+      for (const row of rows) {
+        const cols = [];
+        for (const ch of row) {
+          if (ch >= "1" && ch <= "9") for (let i = 0; i < Number(ch); i++) cols.push(".");
+          else if (PIECES.has(ch)) cols.push(ch);
+          else throw new Error(`FEN 含非法字符 ${ch}`);
+        }
+        if (cols.length !== 9) throw new Error(`FEN 行宽应为 9: ${row}`);
+        board.push(...cols);
+      }
+      const side = fields[1];
+      if (side !== RED && side !== BLACK) throw new Error(`走子方应为 w/b: ${side}`);
+      return new Position(board, side, Number(fields[4] ?? 0), Number(fields[5] ?? 1));
+    }
+
+    toFen() {
+      const rows = [];
+      for (let r = 0; r < 10; r++) {
+        let row = "", empty = 0;
+        for (let c = 0; c < 9; c++) {
+          const pc = this.board[r * 9 + c];
+          if (pc === ".") empty += 1;
+          else {
+            if (empty) { row += empty; empty = 0; }
+            row += pc;
+          }
+        }
+        if (empty) row += empty;
+        rows.push(row);
+      }
+      return `${rows.join("/")} ${this.sideToMove} - - ${this.halfmoveClock} ${this.fullmoveNumber}`;
+    }
+
+    makeMove(m) {
+      const frm = mvFrom(m), to = mvTo(m);
+      const piece = this.board[frm], captured = this.board[to];
+      const undo = [frm, to, piece, captured, this.halfmoveClock];
+      this.board[to] = piece;
+      this.board[frm] = ".";
+      this.halfmoveClock = captured !== "." ? 0 : this.halfmoveClock + 1;
+      if (this.sideToMove === BLACK) this.fullmoveNumber += 1;
+      this.sideToMove = this.sideToMove === RED ? BLACK : RED;
+      return undo;
+    }
+
+    unmakeMove(undo) {
+      const [frm, to, piece, captured, halfmove] = undo;
+      this.board[frm] = piece;
+      this.board[to] = captured;
+      this.halfmoveClock = halfmove;
+      this.sideToMove = this.sideToMove === RED ? BLACK : RED;
+      if (this.sideToMove === BLACK) this.fullmoveNumber -= 1;
+    }
+
+    inCheck(side = null) {
+      side = side || this.sideToMove;
+      const board = this.board;
+      const red = side === RED;
+      const ks = board.indexOf(red ? "K" : "k");
+      const kr = (ks / 9) | 0, kc = ks % 9;
+      const eRook = red ? "r" : "R", eCannon = red ? "c" : "C", eKing = red ? "k" : "K";
+      const eHorse = red ? "n" : "N", ePawn = red ? "p" : "P";
+
+      // 车/炮/照面：沿直线扫描；仕相够不到对方九宫，无需检查
+      for (const [dr, dc] of ORTHO) {
+        let r = kr + dr, c = kc + dc, behindScreen = false;
+        while (r >= 0 && r < 10 && c >= 0 && c < 9) {
+          const pc = board[r * 9 + c];
+          if (pc !== ".") {
+            if (!behindScreen) {
+              if (pc === eRook || pc === eKing) return true;
+              behindScreen = true;
+            } else {
+              if (pc === eCannon) return true;
+              break;
+            }
+          }
+          r += dr; c += dc;
+        }
+      }
+      for (const [dr, dc] of HORSE) {
+        const r = kr + dr, c = kc + dc;
+        if (r >= 0 && r < 10 && c >= 0 && c < 9 && board[r * 9 + c] === eHorse) {
+          const lr = kr + (dr > 0 ? 1 : -1), lc = kc + (dc > 0 ? 1 : -1);
+          if (board[lr * 9 + lc] === ".") return true;
+        }
+      }
+      const eFwd = red ? 1 : -1;
+      const pr = kr - eFwd;
+      if (pr >= 0 && pr < 10 && board[pr * 9 + kc] === ePawn) return true;
+      const enemyCrossed = red ? kr >= 5 : kr <= 4;
+      if (enemyCrossed) {
+        for (const dc of [-1, 1]) {
+          const c = kc + dc;
+          if (c >= 0 && c < 9 && board[kr * 9 + c] === ePawn) return true;
+        }
+      }
+      return false;
+    }
+
+    pseudoMoves() {
+      const board = this.board;
+      const red = this.sideToMove === RED;
+      const moves = [];
+      const push = (s, nr, nc) => moves.push(mv(s, nr * 9 + nc));
+      for (let s = 0; s < 90; s++) {
+        const pc = board[s];
+        if (pc === "." || isRedPiece(pc) !== red) continue;
+        const r = (s / 9) | 0, c = s % 9;
+        const kind = pc.toUpperCase();
+        if (kind === "R") {
+          for (const [dr, dc] of ORTHO) {
+            let nr = r + dr, nc = c + dc;
+            while (nr >= 0 && nr < 10 && nc >= 0 && nc < 9) {
+              const target = board[nr * 9 + nc];
+              if (target === ".") push(s, nr, nc);
+              else {
+                if (isRedPiece(target) !== red) push(s, nr, nc);
+                break;
+              }
+              nr += dr; nc += dc;
+            }
+          }
+        } else if (kind === "C") {
+          for (const [dr, dc] of ORTHO) {
+            let nr = r + dr, nc = c + dc;
+            while (nr >= 0 && nr < 10 && nc >= 0 && nc < 9) {
+              if (board[nr * 9 + nc] !== ".") break;
+              push(s, nr, nc);
+              nr += dr; nc += dc;
+            }
+            nr += dr; nc += dc;
+            while (nr >= 0 && nr < 10 && nc >= 0 && nc < 9) {
+              const target = board[nr * 9 + nc];
+              if (target !== ".") {
+                if (isRedPiece(target) !== red) push(s, nr, nc);
+                break;
+              }
+              nr += dr; nc += dc;
+            }
+          }
+        } else if (kind === "N") {
+          for (const [dr, dc] of HORSE) {
+            const nr = r + dr, nc = c + dc;
+            if (nr < 0 || nr >= 10 || nc < 0 || nc >= 9) continue;
+            const lr = r + (Math.abs(dr) === 2 ? dr / 2 : 0);
+            const lc = c + (Math.abs(dc) === 2 ? dc / 2 : 0);
+            if (board[lr * 9 + lc] !== ".") continue;
+            const target = board[nr * 9 + nc];
+            if (target === "." || isRedPiece(target) !== red) push(s, nr, nc);
+          }
+        } else if (kind === "B") {
+          for (const [dr, dc] of ELEPHANT) {
+            const nr = r + dr, nc = c + dc;
+            if (nr < 0 || nr >= 10 || nc < 0 || nc >= 9) continue;
+            if (red ? nr < 5 : nr > 4) continue;
+            if (board[(r + dr / 2) * 9 + (c + dc / 2)] !== ".") continue;
+            const target = board[nr * 9 + nc];
+            if (target === "." || isRedPiece(target) !== red) push(s, nr, nc);
+          }
+        } else if (kind === "A") {
+          for (const [dr, dc] of DIAG) {
+            const nr = r + dr, nc = c + dc;
+            if (!inPalace(nr, nc, red) || nr < 0 || nr >= 10) continue;
+            const target = board[nr * 9 + nc];
+            if (target === "." || isRedPiece(target) !== red) push(s, nr, nc);
+          }
+        } else if (kind === "K") {
+          for (const [dr, dc] of ORTHO) {
+            const nr = r + dr, nc = c + dc;
+            if (!inPalace(nr, nc, red) || nr < 0 || nr >= 10) continue;
+            const target = board[nr * 9 + nc];
+            if (target === "." || isRedPiece(target) !== red) push(s, nr, nc);
+          }
+        } else if (kind === "P") {
+          const fwd = red ? -1 : 1;
+          const nr = r + fwd;
+          if (nr >= 0 && nr < 10) {
+            const target = board[nr * 9 + c];
+            if (target === "." || isRedPiece(target) !== red) push(s, nr, c);
+          }
+          const crossed = red ? r <= 4 : r >= 5;
+          if (crossed) {
+            for (const dc of [-1, 1]) {
+              const nc = c + dc;
+              if (nc >= 0 && nc < 9) {
+                const target = board[r * 9 + nc];
+                if (target === "." || isRedPiece(target) !== red) push(s, r, nc);
+              }
+            }
+          }
+        }
+      }
+      return moves;
+    }
+
+    legalMoves() {
+      const us = this.sideToMove;
+      const moves = [];
+      for (const m of this.pseudoMoves()) {
+        const undo = this.makeMove(m);
+        if (!this.inCheck(us)) moves.push(m);
+        this.unmakeMove(undo);
+      }
+      return moves;
+    }
+
+    isCheckmate() { return this.inCheck() && this.legalMoves().length === 0; }
+    isStalemate() { return !this.inCheck() && this.legalMoves().length === 0; }
+  }
+
+  function perft(pos, depth) {
+    if (depth === 0) return 1;
+    const moves = pos.legalMoves();
+    if (depth === 1) return moves.length;
+    let total = 0;
+    for (const m of moves) {
+      const undo = pos.makeMove(m);
+      total += perft(pos, depth - 1);
+      pos.unmakeMove(undo);
+    }
+    return total;
+  }
+
+  // ---- 中文记谱（生成方向；红汉字、黑阿拉伯，前/后/中标记同 Python 实现）----
+  const HAN = "一二三四五六七八九";
+  const RED_NAMES = { R: "车", N: "马", C: "炮", P: "兵", K: "帅", A: "仕", B: "相" };
+  const BLACK_NAMES = { r: "车", n: "马", c: "炮", p: "卒", k: "将", a: "士", b: "象" };
+  const fileChar = (col, red) => (red ? HAN[8 - col] : String(col + 1));
+  const numChar = (n, red) => (red ? HAN[n - 1] : String(n));
+  const markers = (n) => {
+    if (n === 2) return ["前", "后"];
+    if (n === 3) return ["前", "中", "后"];
+    const mid = [];
+    for (let i = 1; i < n - 1; i++) mid.push(HAN[i]);
+    return ["前", ...mid, "后"];
+  };
+
+  function notate(pos, m, fileMarker = false) {
+    const board = pos.board;
+    const frm = mvFrom(m), to = mvTo(m);
+    const pc = board[frm];
+    const red = isRedPiece(pc);
+    const r = (frm / 9) | 0, c = frm % 9;
+    const nr = (to / 9) | 0, nc = to % 9;
+    const name = (red ? RED_NAMES : BLACK_NAMES)[pc];
+
+    let marker = "";
+    if ("RNCP".includes(pc.toUpperCase())) {
+      const rows = [];
+      for (let r2 = 0; r2 < 10; r2++) if (board[r2 * 9 + c] === pc) rows.push(r2);
+      if (rows.length > 1) {
+        if (!red) rows.reverse(); // 排头 = 靠近敌方
+        marker = markers(rows.length)[rows.indexOf(r)];
+      }
+    }
+    const prefix = marker ? marker + (fileMarker ? fileChar(c, red) : name) : name + fileChar(c, red);
+    if (nr === r) return prefix + "平" + fileChar(nc, red);
+    const forward = red ? nr < r : nr > r;
+    const verb = forward ? "进" : "退";
+    if ("RCKP".includes(pc.toUpperCase())) return prefix + verb + numChar(Math.abs(nr - r), red);
+    return prefix + verb + fileChar(nc, red);
+  }
+
+  function notationMap(pos) {
+    const result = new Map();
+    const counts = new Map();
+    for (const m of pos.legalMoves()) {
+      const text = notate(pos, m);
+      result.set(m, text);
+      counts.set(text, (counts.get(text) ?? 0) + 1);
+    }
+    for (const [m, text] of result) {
+      if (counts.get(text) > 1) result.set(m, notate(pos, m, true));
+    }
+    return result;
+  }
+
+  const toNotation = (pos, m) => notationMap(pos).get(m);
+
+  // ---- 估值与搜索（与 Python 版同构）----
+  const MATE = 100000;
+  const VALUES = { R: 900, N: 400, C: 450, P: 100, A: 200, B: 200, K: 0 };
+  const PST = (() => {
+    const pst = {};
+    for (const kind of Object.keys(VALUES)) {
+      const table = [];
+      for (let s = 0; s < 90; s++) {
+        const r = (s / 9) | 0, c = s % 9;
+        const center = 4 - Math.abs(c - 4);
+        const advance = 9 - r;
+        let v = 0;
+        if (kind === "P") v = r <= 4 ? 20 + advance * 10 + center * 5 : advance * 2;
+        else if (kind === "N") v = center * 4 + (r <= 4 ? 10 : 0);
+        else if (kind === "C") v = center * 2;
+        else if (kind === "R") v = center * 2 + (r <= 4 ? 10 : 0);
+        else if (kind === "K") v = r === 9 ? 8 : 0;
+        table.push(v);
+      }
+      pst[kind] = table;
+    }
+    return pst;
+  })();
+  const MIRROR = Array.from({ length: 90 }, (_, s) => (9 - ((s / 9) | 0)) * 9 + (s % 9));
+
+  function evaluate(pos) {
+    let score = 0;
+    for (let s = 0; s < 90; s++) {
+      const pc = pos.board[s];
+      if (pc === ".") continue;
+      const kind = pc.toUpperCase();
+      if (isRedPiece(pc)) score += VALUES[kind] + PST[kind][s];
+      else score -= VALUES[kind] + PST[kind][MIRROR[s]];
+    }
+    return score;
+  }
+
+  class Timeout extends Error {}
+
+  class Searcher {
+    constructor(pos, deadline) {
+      this.pos = pos;
+      this.deadline = deadline;
+      this.tt = new Map();
+      this.nodes = 0;
+    }
+
+    tick() {
+      this.nodes += 1;
+      if (this.nodes % 2048 === 0 && Date.now() >= this.deadline) throw new Timeout();
+    }
+
+    evalStm() {
+      const score = evaluate(this.pos);
+      return this.pos.sideToMove === RED ? score : -score;
+    }
+
+    ordered(moves, ttMove) {
+      const board = this.pos.board;
+      const key = (m) => {
+        if (m === ttMove) return -1e9;
+        const captured = board[mvTo(m)];
+        if (captured !== ".") {
+          return -(VALUES[captured.toUpperCase()] * 10 - VALUES[board[mvFrom(m)].toUpperCase()]);
+        }
+        return 0;
+      };
+      return moves.map((m) => [key(m), m]).sort((a, b) => a[0] - b[0]).map((p) => p[1]);
+    }
+
+    qsearch(alpha, beta) {
+      this.tick();
+      const stand = this.evalStm();
+      if (stand >= beta) return stand;
+      alpha = Math.max(alpha, stand);
+      const board = this.pos.board;
+      const captures = this.pos.legalMoves().filter((m) => board[mvTo(m)] !== ".");
+      for (const m of this.ordered(captures, null)) {
+        const undo = this.pos.makeMove(m);
+        let score;
+        try {
+          score = -this.qsearch(-beta, -alpha);
+        } finally {
+          this.pos.unmakeMove(undo);
+        }
+        if (score >= beta) return score;
+        alpha = Math.max(alpha, score);
+      }
+      return alpha;
+    }
+
+    negamax(depth, alpha, beta, ply) {
+      this.tick();
+      const key = this.pos.board.join("") + this.pos.sideToMove;
+      const entry = this.tt.get(key);
+      const ttMove = entry ? entry[3] : null;
+      if (entry && entry[0] >= depth) {
+        const [, score, flag] = entry;
+        if (flag === 0) return score;
+        if (flag === 1 && score >= beta) return score;
+        if (flag === 2 && score <= alpha) return score;
+      }
+      if (depth === 0) return this.qsearch(alpha, beta);
+
+      const moves = this.pos.legalMoves();
+      if (moves.length === 0) return -(MATE - ply); // 将死与困毙同为负
+
+      let best = -MATE * 2;
+      let bestMove = null;
+      const originalAlpha = alpha;
+      for (const m of this.ordered(moves, ttMove)) {
+        const undo = this.pos.makeMove(m);
+        let score;
+        try {
+          score = -this.negamax(depth - 1, -beta, -alpha, ply + 1);
+        } finally {
+          this.pos.unmakeMove(undo);
+        }
+        if (score > best) { best = score; bestMove = m; }
+        alpha = Math.max(alpha, score);
+        if (alpha >= beta) break;
+      }
+      const flag = best >= beta ? 1 : best <= originalAlpha ? 2 : 0;
+      this.tt.set(key, [depth, best, flag, bestMove]);
+      return best;
+    }
+
+    root(depth) {
+      const moves = this.pos.legalMoves();
+      const key = this.pos.board.join("") + this.pos.sideToMove;
+      const entry = this.tt.get(key);
+      const ttMove = entry ? entry[3] : null;
+      let best = -MATE * 2;
+      let bestMove = moves[0];
+      let alpha = -MATE * 2;
+      const beta = MATE * 2;
+      for (const m of this.ordered(moves, ttMove)) {
+        const undo = this.pos.makeMove(m);
+        let score;
+        try {
+          score = -this.negamax(depth - 1, -beta, -alpha, 1);
+        } finally {
+          this.pos.unmakeMove(undo);
+        }
+        if (score > best) { best = score; bestMove = m; }
+        alpha = Math.max(alpha, score);
+      }
+      this.tt.set(key, [depth, best, 0, bestMove]);
+      return [best, bestMove];
+    }
+  }
+
+  function search(pos, { timeLimit = 2.0, maxDepth = 32 } = {}) {
+    if (pos.legalMoves().length === 0) return null;
+    const searcher = new Searcher(pos, Date.now() + timeLimit * 1000);
+    let result = null;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      let score, move;
+      try {
+        [score, move] = searcher.root(depth);
+      } catch (e) {
+        if (e instanceof Timeout) break;
+        throw e;
+      }
+      result = { move, score, depth, nodes: searcher.nodes };
+      if (score > MATE - 1000) break;
+    }
+    return result ?? { move: pos.legalMoves()[0], score: 0, depth: 0, nodes: searcher.nodes };
+  }
+
+  return {
+    RED, BLACK, START_FEN, Position, perft, evaluate, search, MATE,
+    toNotation, notationMap, mv, mvFrom, mvTo,
+  };
+})();
+</script>
+<script>
+// UI 待实现
+</script>
+</body>
+</html>

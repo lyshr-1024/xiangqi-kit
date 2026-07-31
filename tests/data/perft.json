@@ -5,6 +5,21 @@
       "name": "startpos",
       "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
       "depths": { "1": 44, "2": 1920, "3": 79666, "4": 3290240, "5": 133312995 }
+    },
+    {
+      "name": "opening_6ply",
+      "fen": "rnbakabr1/9/1c4n2/p1p1p1p1p/9/9/P1P1P1PcP/1C2C1N2/9/RNBAKABR1 w - - 6 4",
+      "depths": { "1": 34, "2": 1439, "3": 50134 }
+    },
+    {
+      "name": "endgame_sparse",
+      "fen": "3k5/4a4/4ba3/9/9/9/4P4/4B4/4A4/2BAK4 w - - 0 1",
+      "depths": { "1": 9, "2": 72, "3": 656 }
+    },
+    {
+      "name": "tactical_mid",
+      "fen": "2bak4/9/4b4/p3p3p/4c4/2P3P2/P3P3P/4C4/9/2BAKAB2 b - - 0 1",
+      "depths": { "1": 19, "2": 290, "3": 5637 }
     }
   ]
 }
