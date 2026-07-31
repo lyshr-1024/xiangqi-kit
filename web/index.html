@@ -4,8 +4,238 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>中国象棋</title>
+<style>
+:root {
+  --paper: #ede3cd;
+  --paper-deep: #e2d4b6;
+  --ink: #2b2620;
+  --ink-soft: #6b6355;
+  --cinnabar: #a63a2a;
+  --cinnabar-deep: #8c2f22;
+  --ivory: #f8f0dd;
+  --wood-hi: #d9b98c;
+  --wood-lo: #c6a06b;
+  --wood-frame: #7d5633;
+  --line: #6b4a26;
+  --jade: #3f7f6e;
+  --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "SimSun", serif;
+  --kai: "Kaiti SC", "STKaiti", "KaiTi", "BiauKai", var(--serif);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: var(--serif);
+  color: var(--ink);
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 252, 242, .65), rgba(255, 252, 242, 0) 60%),
+    linear-gradient(180deg, var(--paper), var(--paper-deep));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 24px 16px 40px;
+}
+.app-header {
+  width: min(1060px, 100%);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px 24px;
+  padding-bottom: 18px;
+}
+h1 {
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: .35em;
+  text-indent: .1em;
+}
+h1 .sub {
+  font-size: .72rem;
+  letter-spacing: .5em;
+  color: var(--ink-soft);
+  margin-left: 1.2em;
+  vertical-align: .35em;
+}
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls label { font-size: .85rem; color: var(--ink-soft); letter-spacing: .12em; }
+select, button {
+  font-family: var(--serif);
+  font-size: .9rem;
+  color: var(--ink);
+  background: var(--ivory);
+  border: 1px solid #c9b489;
+  border-radius: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, transform .1s;
+}
+select:hover, button:hover { border-color: var(--wood-frame); }
+button:active { transform: translateY(1px); }
+button.primary { background: var(--cinnabar); border-color: var(--cinnabar-deep); color: var(--ivory); }
+button.primary:hover { background: var(--cinnabar-deep); }
+main {
+  width: min(1060px, 100%);
+  display: flex;
+  gap: 26px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.board-wrap {
+  /* 宽度同时受容器与视口高度约束，保证棋盘不出首屏（580/640 ≈ 0.906） */
+  flex: 0 1 min(620px, calc((100vh - 200px) * 0.906));
+  min-width: 300px;
+  filter: drop-shadow(0 18px 30px rgba(60, 40, 15, .28));
+}
+#board { width: 100%; height: auto; display: block; border-radius: 10px; }
+.panel {
+  flex: 1 1 300px;
+  min-width: 260px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.status {
+  background: var(--ivory);
+  border: 1px solid #d5c49d;
+  border-left: 4px solid var(--cinnabar);
+  border-radius: 8px;
+  padding: 13px 16px;
+  font-size: 1rem;
+  letter-spacing: .1em;
+  min-height: 3em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.status.black-turn { border-left-color: var(--ink); }
+.status.over { border-left-color: var(--jade); font-weight: 700; }
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(43, 38, 32, .2);
+  border-top-color: var(--cinnabar);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+  flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.record {
+  background: var(--ivory);
+  border: 1px solid #d5c49d;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.record h2 {
+  font-size: .82rem;
+  letter-spacing: .4em;
+  color: var(--ink-soft);
+  font-weight: 400;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid #e3d6b4;
+}
+#movelist {
+  list-style: none;
+  overflow-y: auto;
+  max-height: 430px;
+  padding: 6px 0;
+  font-size: .95rem;
+}
+#movelist li {
+  display: grid;
+  grid-template-columns: 3em 1fr 1fr;
+  align-items: center;
+  padding: 0 14px;
+}
+#movelist .no { color: var(--ink-soft); font-size: .8rem; text-align: right; padding-right: .8em; }
+#movelist .ply {
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  letter-spacing: .08em;
+  transition: background .12s;
+}
+#movelist .ply:hover { background: rgba(166, 58, 42, .09); }
+#movelist .ply.current { background: rgba(166, 58, 42, .16); font-weight: 700; }
+#movelist .empty { grid-column: 1 / -1; color: var(--ink-soft); text-align: center; padding: 18px 0; font-size: .85rem; letter-spacing: .2em; }
+#tohead { align-self: center; margin: 4px 0 10px; font-size: .82rem; padding: 5px 14px; }
+footer { margin-top: 26px; font-size: .75rem; color: var(--ink-soft); letter-spacing: .25em; }
+
+/* SVG 内元素 */
+.piece { cursor: pointer; transition: transform .18s ease-out; }
+.piece circle.body { transition: filter .15s; }
+.piece:hover circle.body { filter: brightness(1.05); }
+.piece text {
+  font-family: var(--kai);
+  font-size: 30px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+.piece.dead { display: none; }
+.piece.selected circle.ring { stroke: var(--jade); stroke-width: 2.5; }
+.piece.in-check circle.body { animation: checkpulse .9s ease-in-out infinite; }
+@keyframes checkpulse {
+  0%, 100% { filter: none; }
+  50% { filter: drop-shadow(0 0 7px rgba(166, 58, 42, .95)) brightness(1.08); }
+}
+.dot { fill: var(--jade); opacity: .55; cursor: pointer; transition: opacity .12s; }
+.dot:hover { opacity: .95; }
+.capture-ring { fill: none; stroke: var(--jade); stroke-width: 2.5; stroke-dasharray: 5 4; opacity: .8; cursor: pointer; }
+.lastmove { fill: none; stroke: rgba(166, 58, 42, .55); stroke-width: 2; }
+.board-label { font-family: var(--serif); font-size: 15px; fill: rgba(80, 55, 25, .75); text-anchor: middle; }
+.river-text {
+  font-family: var(--kai);
+  font-size: 30px;
+  fill: rgba(90, 62, 28, .38);
+  text-anchor: middle;
+  letter-spacing: .5em;
+}
+@media (max-width: 720px) {
+  h1 { font-size: 1.5rem; }
+  #movelist { max-height: 220px; }
+}
+</style>
 </head>
 <body>
+<header class="app-header">
+  <h1>象棋<span class="sub">XIANGQI</span></h1>
+  <div class="controls">
+    <label>难度
+      <select id="difficulty">
+        <option value="easy">入门</option>
+        <option value="normal" selected>普通</option>
+        <option value="strong">较强</option>
+      </select>
+    </label>
+    <label>执子
+      <select id="mode">
+        <option value="red" selected>执红对 AI</option>
+        <option value="black">执黑对 AI</option>
+        <option value="both">双人对弈</option>
+      </select>
+    </label>
+    <button id="undo">悔棋</button>
+    <button id="new" class="primary">新对局</button>
+  </div>
+</header>
+<main>
+  <div class="board-wrap"><svg id="board" viewBox="0 0 580 640" aria-label="棋盘"></svg></div>
+  <aside class="panel">
+    <div id="status" class="status">轮到红方</div>
+    <div class="record">
+      <h2>棋谱</h2>
+      <ol id="movelist"></ol>
+      <button id="tohead" hidden>回到最新</button>
+    </div>
+  </aside>
+</main>
+<footer>本地引擎 · 零依赖 · 可离线</footer>
 <!-- 引擎块：主线程、Web Worker（经 textContent 提取）、Node perft 测试三方共用 -->
 <script id="engine">
 "use strict";
@@ -496,7 +726,407 @@ const XQ = (() => {
 })();
 </script>
 <script>
-// UI 待实现
+"use strict";
+(() => {
+  const { Position, START_FEN, RED, BLACK } = XQ;
+  const CELL = 60, MARGIN = 50, R_PIECE = 26;
+  const NS = "http://www.w3.org/2000/svg";
+  const HAN = "一二三四五六七八九";
+  const CHARS = {
+    R: "俥", N: "傌", B: "相", A: "仕", K: "帥", C: "炮", P: "兵",
+    r: "車", n: "馬", b: "象", a: "士", k: "將", c: "砲", p: "卒",
+  };
+  const DIFFICULTY = {
+    easy: { timeLimit: 0.2, maxDepth: 2 },
+    normal: { timeLimit: 1 },
+    strong: { timeLimit: 3 },
+  };
+
+  const svg = document.getElementById("board");
+  const statusEl = document.getElementById("status");
+  const movelistEl = document.getElementById("movelist");
+  const toHeadBtn = document.getElementById("tohead");
+  const modeSel = document.getElementById("mode");
+  const diffSel = document.getElementById("difficulty");
+
+  const state = {
+    plies: [],        // {m, notation, fen}
+    viewPly: 0,
+    mode: "red",
+    flip: false,
+    selected: null,
+    selectedMoves: [],
+    thinking: false,
+    generation: 0,
+    result: null,
+  };
+
+  const fenAt = (ply) => (ply === 0 ? START_FEN : state.plies[ply - 1].fen);
+  const positionAt = (ply) => Position.fromFen(fenAt(ply));
+  const atHead = () => state.viewPly === state.plies.length;
+  const humanSide = () => (state.mode === "black" ? BLACK : RED);
+
+  function gameResult() {
+    const pos = positionAt(state.plies.length);
+    if (pos.legalMoves().length === 0) {
+      const winner = pos.sideToMove === BLACK ? "红方胜" : "黑方胜";
+      return `${winner} · ${pos.inCheck() ? "将死" : "困毙"}`;
+    }
+    const counts = new Map();
+    for (let p = 0; p <= state.plies.length; p++) {
+      const key = fenAt(p).split(" ").slice(0, 2).join(" ");
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const head = fenAt(state.plies.length).split(" ").slice(0, 2).join(" ");
+    return counts.get(head) >= 3 ? "和棋 · 三次重复局面" : null;
+  }
+
+  // ---- SVG 几何 ----
+  const xy = (r, c) => {
+    const rr = state.flip ? 9 - r : r;
+    const cc = state.flip ? 8 - c : c;
+    return [MARGIN + cc * CELL, MARGIN + rr * CELL];
+  };
+  const el = (tag, attrs = {}, parent = null) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (parent) parent.appendChild(node);
+    return node;
+  };
+
+  let gridG, labelsG, overlayG, piecesG;
+
+  function buildBoard() {
+    svg.textContent = "";
+    const defs = el("defs", {}, svg);
+    const grad = el("linearGradient", { id: "wood", x1: 0, y1: 0, x2: 1, y2: 1 }, defs);
+    el("stop", { offset: "0%", "stop-color": "#dcbd90" }, grad);
+    el("stop", { offset: "55%", "stop-color": "#d0ac79" }, grad);
+    el("stop", { offset: "100%", "stop-color": "#c39a63" }, grad);
+    const grain = el("filter", { id: "grain", x: 0, y: 0, width: "100%", height: "100%" }, defs);
+    el("feTurbulence", { type: "fractalNoise", baseFrequency: "0.012 0.15", numOctaves: 2, result: "noise" }, grain);
+    el("feColorMatrix", { in: "noise", type: "matrix", values: "0 0 0 0 0.35 0 0 0 0 0.22 0 0 0 0 0.08 0 0 0 0.06 0" }, grain);
+
+    el("rect", { x: 0, y: 0, width: 580, height: 640, rx: 10, fill: "url(#wood)", stroke: "#7d5633", "stroke-width": 3 }, svg);
+    el("rect", { x: 0, y: 0, width: 580, height: 640, rx: 10, filter: "url(#grain)" }, svg);
+
+    gridG = el("g", { stroke: "#6b4a26", "stroke-width": 1.2, "stroke-linecap": "round" }, svg);
+    const X = (c) => MARGIN + c * CELL, Y = (r) => MARGIN + r * CELL;
+    el("rect", { x: X(0) - 5, y: Y(0) - 5, width: 8 * CELL + 10, height: 9 * CELL + 10, fill: "none", "stroke-width": 2.2 }, gridG);
+    for (let r = 0; r < 10; r++) el("line", { x1: X(0), y1: Y(r), x2: X(8), y2: Y(r) }, gridG);
+    for (let c = 0; c < 9; c++) {
+      if (c === 0 || c === 8) el("line", { x1: X(c), y1: Y(0), x2: X(c), y2: Y(9) }, gridG);
+      else {
+        el("line", { x1: X(c), y1: Y(0), x2: X(c), y2: Y(4) }, gridG);
+        el("line", { x1: X(c), y1: Y(5), x2: X(c), y2: Y(9) }, gridG);
+      }
+    }
+    for (const [r1, c1, r2, c2] of [[0, 3, 2, 5], [0, 5, 2, 3], [7, 3, 9, 5], [7, 5, 9, 3]]) {
+      el("line", { x1: X(c1), y1: Y(r1), x2: X(c2), y2: Y(r2) }, gridG);
+    }
+    // 炮/兵位刻点
+    const tick = (r, c) => {
+      const [px, py] = [X(c), Y(r)];
+      const g = 4, L = 7;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        if ((c === 0 && sx < 0) || (c === 8 && sx > 0)) continue;
+        el("path", {
+          d: `M ${px + sx * g} ${py + sy * (g + L)} V ${py + sy * g} H ${px + sx * (g + L)}`,
+          fill: "none", "stroke-width": 1.1,
+        }, gridG);
+      }
+    };
+    for (const [r, c] of [[2, 1], [2, 7], [7, 1], [7, 7]]) tick(r, c);
+    for (const r of [3, 6]) for (const c of [0, 2, 4, 6, 8]) tick(r, c);
+
+    const riverY = Y(4) + CELL / 2;
+    el("text", { x: X(2), y: riverY, class: "river-text" }, svg).textContent = "楚 河";
+    el("text", { x: X(6), y: riverY, class: "river-text" }, svg).textContent = "漢 界";
+
+    labelsG = el("g", {}, svg);
+    overlayG = el("g", {}, svg);
+    piecesG = el("g", {}, svg);
+    svg.addEventListener("click", (e) => {
+      if (e.target === svg || e.target.ownerSVGElement && !e.target.closest(".piece, .dot")) clearSelection();
+    });
+  }
+
+  function renderLabels() {
+    labelsG.textContent = "";
+    for (let cc = 0; cc < 9; cc++) {
+      const c = state.flip ? 8 - cc : cc;
+      const x = MARGIN + cc * CELL;
+      const topRed = state.flip;
+      const topText = topRed ? HAN[8 - c] : String(c + 1);
+      const bottomText = topRed ? String(c + 1) : HAN[8 - c];
+      el("text", { x, y: MARGIN - 28, class: "board-label" }, labelsG).textContent = topText;
+      el("text", { x, y: MARGIN + 9 * CELL + 36, class: "board-label" }, labelsG).textContent = bottomText;
+    }
+  }
+
+  // ---- 棋子模型（带身份，便于走子动画）----
+  let pieces = [];      // {pc, square, alive, el}
+  let squarePiece = []; // square -> piece 索引
+
+  function initPieces() {
+    piecesG.textContent = "";
+    pieces = [];
+    const board = Position.fromFen(START_FEN).board;
+    board.forEach((pc, s) => {
+      if (pc === ".") return;
+      const red = pc === pc.toUpperCase();
+      const g = el("g", { class: `piece ${red ? "red" : "black"}` }, piecesG);
+      el("circle", { class: "body", r: R_PIECE, fill: "#f8f0dd", stroke: "#b89968", "stroke-width": 1.5 }, g);
+      el("circle", { class: "ring", r: R_PIECE - 4.5, fill: "none", stroke: red ? "#a63a2a" : "#2b2620", "stroke-width": 1.2 }, g);
+      const t = el("text", { fill: red ? "#a63a2a" : "#2b2620", dy: 1 }, g);
+      t.textContent = CHARS[pc];
+      const idx = pieces.length;
+      g.addEventListener("click", () => onSquare(pieces[idx].square));
+      pieces.push({ pc, square: s, alive: true, el: g });
+    });
+  }
+
+  function layoutPieces() {
+    squarePiece = Array(90).fill(null);
+    pieces.forEach((p) => { p.alive = true; p.square = null; });
+    const board = Position.fromFen(START_FEN).board;
+    let i = 0;
+    const bySquare = Array(90).fill(null);
+    board.forEach((pc, s) => { if (pc !== ".") bySquare[s] = i++; });
+    for (let k = 0; k < state.viewPly; k++) {
+      const m = state.plies[k].m;
+      const frm = XQ.mvFrom(m), to = XQ.mvTo(m);
+      if (bySquare[to] !== null) pieces[bySquare[to]].alive = false;
+      bySquare[to] = bySquare[frm];
+      bySquare[frm] = null;
+    }
+    bySquare.forEach((idx, s) => { if (idx !== null) { pieces[idx].square = s; squarePiece[s] = idx; } });
+
+    const pos = positionAt(state.viewPly);
+    const checkedKing = pos.inCheck() ? pos.board.indexOf(pos.sideToMove === RED ? "K" : "k") : -1;
+    pieces.forEach((p) => {
+      p.el.classList.toggle("dead", !p.alive);
+      if (!p.alive) return;
+      const [x, y] = xy((p.square / 9) | 0, p.square % 9);
+      p.el.style.transform = `translate(${x}px, ${y}px)`;
+      p.el.classList.toggle("selected", p.square === state.selected);
+      p.el.classList.toggle("in-check", p.square === checkedKing);
+    });
+  }
+
+  function renderOverlay() {
+    overlayG.textContent = "";
+    if (state.viewPly > 0) {
+      const m = state.plies[state.viewPly - 1].m;
+      for (const s of [XQ.mvFrom(m), XQ.mvTo(m)]) {
+        const [x, y] = xy((s / 9) | 0, s % 9);
+        el("rect", { x: x - 30, y: y - 30, width: 60, height: 60, rx: 8, class: "lastmove" }, overlayG);
+      }
+    }
+    for (const m of state.selectedMoves) {
+      const to = XQ.mvTo(m);
+      const [x, y] = xy((to / 9) | 0, to % 9);
+      if (squarePiece[to] !== null) {
+        el("circle", { cx: x, cy: y, r: R_PIECE + 3.5, class: "capture-ring", "pointer-events": "none" }, overlayG);
+      } else {
+        const dot = el("circle", { cx: x, cy: y, r: 8, class: "dot" }, overlayG);
+        dot.addEventListener("click", () => doMove(m));
+      }
+    }
+  }
+
+  function renderStatus() {
+    const side = positionAt(state.viewPly).sideToMove;
+    statusEl.classList.toggle("black-turn", side === BLACK);
+    statusEl.classList.toggle("over", !!state.result && atHead());
+    if (!atHead()) {
+      statusEl.textContent = `复盘中 · 第 ${state.viewPly} 手（共 ${state.plies.length} 手）`;
+    } else if (state.result) {
+      statusEl.textContent = state.result;
+    } else if (state.thinking) {
+      statusEl.innerHTML = `<span class="spinner"></span>AI 思考中…`;
+    } else {
+      const pos = positionAt(state.viewPly);
+      statusEl.textContent = `轮到${side === RED ? "红方" : "黑方"}${pos.inCheck() ? " · 将军！" : ""}`;
+    }
+  }
+
+  function renderMovelist() {
+    movelistEl.textContent = "";
+    if (state.plies.length === 0) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="empty">对局尚未开始</span>`;
+      movelistEl.appendChild(li);
+    }
+    for (let i = 0; i < state.plies.length; i += 2) {
+      const li = document.createElement("li");
+      const no = document.createElement("span");
+      no.className = "no";
+      no.textContent = `${i / 2 + 1}.`;
+      li.appendChild(no);
+      for (const j of [i, i + 1]) {
+        const span = document.createElement("span");
+        span.className = "ply";
+        if (j < state.plies.length) {
+          span.textContent = state.plies[j].notation;
+          if (j + 1 === state.viewPly) span.classList.add("current");
+          span.addEventListener("click", () => { state.selected = null; state.selectedMoves = []; state.viewPly = j + 1; renderAll(); });
+        }
+        li.appendChild(span);
+      }
+      movelistEl.appendChild(li);
+    }
+    movelistEl.scrollTop = atHead() ? movelistEl.scrollHeight : movelistEl.scrollTop;
+    toHeadBtn.hidden = atHead();
+  }
+
+  function renderAll() {
+    state.result = gameResult();
+    layoutPieces();
+    renderOverlay();
+    renderStatus();
+    renderMovelist();
+  }
+
+  // ---- 交互 ----
+  function clearSelection() {
+    if (state.selected === null) return;
+    state.selected = null;
+    state.selectedMoves = [];
+    layoutPieces();
+    renderOverlay();
+  }
+
+  function snapToHead() {
+    state.viewPly = state.plies.length;
+    state.selected = null;
+    state.selectedMoves = [];
+    renderAll();
+  }
+
+  function onSquare(s) {
+    if (state.thinking) return;
+    if (!atHead()) { snapToHead(); return; }
+    if (state.result) return;
+    const pos = positionAt(state.viewPly);
+    if (state.mode !== "both" && pos.sideToMove !== humanSide()) return;
+    const pc = pos.board[s];
+    const mine = pc !== "." && (pc === pc.toUpperCase()) === (pos.sideToMove === RED);
+    if (state.selected !== null) {
+      const m = state.selectedMoves.find((m2) => XQ.mvTo(m2) === s);
+      if (m) { doMove(m); return; }
+    }
+    if (mine) {
+      state.selected = s;
+      state.selectedMoves = pos.legalMoves().filter((m) => XQ.mvFrom(m) === s);
+    } else {
+      state.selected = null;
+      state.selectedMoves = [];
+    }
+    layoutPieces();
+    renderOverlay();
+  }
+
+  function doMove(m) {
+    const pos = positionAt(state.plies.length);
+    const notation = XQ.toNotation(pos, m);
+    pos.makeMove(m);
+    if (!atHead()) state.plies.length = state.viewPly; // 从历史分支出新变化
+    state.plies.push({ m, notation, fen: pos.toFen() });
+    state.viewPly = state.plies.length;
+    state.selected = null;
+    state.selectedMoves = [];
+    renderAll();
+    maybeAI();
+  }
+
+  // ---- AI（Web Worker，失败时回退主线程）----
+  let worker = null, workerBroken = false;
+
+  function ensureWorker() {
+    if (worker || workerBroken) return worker;
+    try {
+      const src = document.getElementById("engine").textContent +
+        "\nonmessage = (e) => {" +
+        " const { fen, options, gen } = e.data;" +
+        " const r = XQ.search(XQ.Position.fromFen(fen), options);" +
+        " postMessage({ gen, move: r && r.move });" +
+        "};";
+      worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+      worker.onmessage = (e) => onAIResult(e.data.gen, e.data.move);
+      worker.onerror = () => { workerBroken = true; worker = null; };
+    } catch {
+      workerBroken = true;
+    }
+    return worker;
+  }
+
+  function onAIResult(gen, m) {
+    if (gen !== state.generation) return;
+    state.thinking = false;
+    if (m != null) doMove(m);
+    else renderAll();
+  }
+
+  function maybeAI() {
+    if (state.result || state.mode === "both" || !atHead()) return;
+    const pos = positionAt(state.plies.length);
+    const aiSide = state.mode === "red" ? BLACK : RED;
+    if (pos.sideToMove !== aiSide) return;
+    state.thinking = true;
+    renderStatus();
+    const gen = state.generation;
+    const options = DIFFICULTY[diffSel.value];
+    const w = ensureWorker();
+    if (w) {
+      w.postMessage({ fen: pos.toFen(), options, gen });
+    } else {
+      setTimeout(() => {
+        const r = XQ.search(pos, options);
+        onAIResult(gen, r && r.move);
+      }, 30);
+    }
+  }
+
+  function undo() {
+    if (state.plies.length === 0 && !state.thinking) return;
+    state.generation += 1; // 作废进行中的思考
+    state.thinking = false;
+    if (state.plies.length > 0) {
+      state.plies.pop();
+      if (state.mode !== "both") {
+        while (state.plies.length > 0 && positionAt(state.plies.length).sideToMove !== humanSide()) {
+          state.plies.pop();
+        }
+      }
+    }
+    snapToHead();
+    maybeAI();
+  }
+
+  function newGame() {
+    state.generation += 1;
+    state.thinking = false;
+    state.plies = [];
+    state.viewPly = 0;
+    state.selected = null;
+    state.selectedMoves = [];
+    state.mode = modeSel.value;
+    state.flip = state.mode === "black";
+    renderLabels();
+    initPieces();
+    renderAll();
+    maybeAI();
+  }
+
+  document.getElementById("new").addEventListener("click", newGame);
+  document.getElementById("undo").addEventListener("click", undo);
+  toHeadBtn.addEventListener("click", snapToHead);
+  modeSel.addEventListener("change", newGame);
+
+  buildBoard();
+  newGame();
+})();
 </script>
 </body>
 </html>
