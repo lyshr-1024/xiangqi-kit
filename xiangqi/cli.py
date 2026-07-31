@@ -93,7 +93,18 @@ def _cmd_history(args: argparse.Namespace) -> int:
 
 
 def _cmd_ai(args: argparse.Namespace) -> int:
-    raise ValueError("AI 走子尚未实现")
+    from xiangqi.search import search
+
+    game = _load(args.name)
+    if game.result is not None:
+        raise ValueError("棋局已结束")
+    result = search(game.position, time_limit=args.time)
+    notation = to_notation(game.position, result.move)
+    game.move(notation)
+    game.save(_game_path(args.name))
+    print(f"AI 走：{notation}（深度 {result.depth}，评分 {result.score:+d}，{result.nodes} 节点）")
+    _print_state(game)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     add("show", _cmd_show, "显示棋盘")
     p_move = add("move", _cmd_move, "按中文记谱走一步")
     p_move.add_argument("notation", help="如 炮二平五 / 马8进7 / 前车进三")
-    add("ai", _cmd_ai, "让 AI 走一步")
+    p_ai = add("ai", _cmd_ai, "让 AI 走一步")
+    p_ai.add_argument("--time", type=float, default=2.0, help="单步限时秒数（默认 2）")
     add("undo", _cmd_undo, "悔一步棋")
     add("legal", _cmd_legal, "列出所有合法着法")
     add("fen", _cmd_fen, "输出当前 FEN")

@@ -93,6 +93,23 @@ def test_named_games_are_independent(home, capsys):
     assert (home / "games" / "b.json").exists()
 
 
+def test_ai_plays_a_move(home, capsys):
+    main(["new"])
+    capsys.readouterr()
+    assert main(["ai", "--time", "0.2"]) == 0
+    out = capsys.readouterr().out
+    assert "AI 走：" in out
+    assert "轮到黑方" in out
+    data = json.loads((home / "games" / "default.json").read_text())
+    assert len(data["moves"]) == 1
+
+
+def test_ai_refuses_when_game_over(capsys):
+    main(["new", "--fen", "4k3R/R8/9/9/9/9/9/9/9/3K5 b - - 0 1"])
+    assert main(["ai", "--time", "0.2"]) == 1
+    assert "已结束" in capsys.readouterr().err
+
+
 def test_show_reports_result_when_game_over(capsys):
     main(["new", "--fen", "4k4/R7R/9/9/9/9/9/9/9/3K5 w - - 0 1"])
     main(["move", "车一进一"])
