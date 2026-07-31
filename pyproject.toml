@@ -1,0 +1,16 @@
+[project]
+name = "xiangqi-kit"
+version = "0.1.0"
+description = "Chinese chess (xiangqi) engine, CLI skill, and web UI"
+requires-python = ">=3.10"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-m 'not slow'"
+markers = ["slow: long-running perft depths, run with -m slow"]

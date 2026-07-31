@@ -1,0 +1,10 @@
+{
+  "_comment": "Python 与 JS 实现共享的 perft 校验数据。startpos 的节点数为社区公认参考值；其余局面用于锁定两份实现行为一致。",
+  "positions": [
+    {
+      "name": "startpos",
+      "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1",
+      "depths": { "1": 44, "2": 1920, "3": 79666, "4": 3290240, "5": 133312995 }
+    }
+  ]
+}
