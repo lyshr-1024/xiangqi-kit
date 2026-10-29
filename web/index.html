@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>中国象棋</title>
+<!-- 静态托管（GitHub Pages）无法设置 COOP/COEP 响应头，用 service worker 补上，多线程 WASM 引擎才能用 SharedArrayBuffer -->
+<script src="coi-serviceworker.js"></script>
 <style>
 :root {
   --paper: #ede3cd;
@@ -209,8 +211,9 @@ footer { margin-top: 26px; font-size: .75rem; color: var(--ink-soft); letter-spa
     <label>难度
       <select id="difficulty">
         <option value="easy">入门</option>
-        <option value="normal" selected>普通</option>
-        <option value="strong">较强</option>
+        <option value="normal">普通</option>
+        <option value="strong" selected>较强</option>
+        <option value="master">大师</option>
       </select>
     </label>
     <label>执子
@@ -235,7 +238,7 @@ footer { margin-top: 26px; font-size: .75rem; color: var(--ink-soft); letter-spa
     </div>
   </aside>
 </main>
-<footer>本地引擎 · 零依赖 · 可离线</footer>
+<footer id="engine-label">内置引擎 · 零依赖 · 可离线</footer>
 <!-- 引擎块：主线程、Web Worker（经 textContent 提取）、Node perft 测试三方共用 -->
 <script id="engine">
 "use strict";
@@ -784,10 +787,12 @@ const XQ = (() => {
     R: "俥", N: "傌", B: "相", A: "仕", K: "帥", C: "炮", P: "兵",
     r: "車", n: "馬", b: "象", a: "士", k: "將", c: "砲", p: "卒",
   };
+  // timeLimit/maxDepth 给内置 JS 引擎；skill/movetime 给 Fairy-Stockfish（Skill Level -20~20，20 为全力）
   const DIFFICULTY = {
-    easy: { timeLimit: 0.2, maxDepth: 2 },
-    normal: { timeLimit: 1 },
-    strong: { timeLimit: 3 },
+    easy: { timeLimit: 0.2, maxDepth: 2, skill: -5, movetime: 300 },
+    normal: { timeLimit: 1, skill: 5, movetime: 1000 },
+    strong: { timeLimit: 3, skill: 15, movetime: 2000 },
+    master: { timeLimit: 3, skill: 20, movetime: 3000 },
   };
 
   const svg = document.getElementById("board");
@@ -1116,6 +1121,47 @@ const XQ = (() => {
     else renderAll();
   }
 
+  // ---- 强引擎：Fairy-Stockfish（WASM + 象棋 NNUE）。需跨源隔离与 HTTP 访问，不满足时一直用上面的内置引擎 ----
+  // UCI 坐标：列 a-i 自红方左起，行 1-10 自红方底线起（马8进7 = b10c8）
+  const fairy = { sf: null, ready: false, pending: [] }; // pending：已发 go、尚未收到 bestmove 的 generation 队列
+  const toUci = (m) => [XQ.mvFrom(m), XQ.mvTo(m)].map((s) => "abcdefghi"[s % 9] + (10 - ((s / 9) | 0))).join("");
+  const fromUci = (text) => {
+    const [, f1, r1, f2, r2] = text.match(/^([a-i])(\d+)([a-i])(\d+)/);
+    const sq = (f, r) => (10 - r) * 9 + "abcdefghi".indexOf(f);
+    return XQ.mv(sq(f1, +r1), sq(f2, +r2));
+  };
+
+  function onFairyLine(line) {
+    if (line === "readyok" && !fairy.ready) {
+      fairy.ready = true;
+      document.getElementById("engine-label").textContent = "Fairy-Stockfish · 象棋 NNUE · GPL-3.0";
+    } else if (line.startsWith("bestmove")) {
+      const move = line.split(" ")[1];
+      onAIResult(fairy.pending.shift(), move === "(none)" ? null : fromUci(move));
+    }
+  }
+
+  function loadFairy() {
+    if (!window.crossOriginIsolated) return;
+    const script = document.createElement("script");
+    script.src = "engine/stockfish.js"; // wasm 与 pthread worker 按这个脚本的地址相对加载
+    script.onload = async () => {
+      const sf = await Stockfish();
+      const nnue = await fetch("engine/xiangqi.nnue");
+      sf.FS.writeFile("/xiangqi.nnue", new Uint8Array(await nnue.arrayBuffer()));
+      sf.addMessageListener(onFairyLine);
+      const threads = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+      for (const cmd of ["uci", "setoption name UCI_Variant value xiangqi", "setoption name EvalFile value /xiangqi.nnue",
+        `setoption name Threads value ${threads}`, "setoption name Hash value 64", "isready"]) sf.postMessage(cmd);
+      fairy.sf = sf;
+    };
+    document.head.appendChild(script);
+  }
+
+  function stopFairy() {
+    if (fairy.pending.length) fairy.sf.postMessage("stop"); // 结果会因 generation 过期被丢弃
+  }
+
   function maybeAI() {
     if (state.result || state.mode === "both" || !atHead()) return;
     const pos = positionAt(state.plies.length);
@@ -1124,6 +1170,15 @@ const XQ = (() => {
     state.thinking = true;
     renderStatus();
     const gen = state.generation;
+    if (fairy.ready) {
+      const { skill, movetime } = DIFFICULTY[diffSel.value];
+      const moves = state.plies.map((p) => toUci(p.m)).join(" "); // 带上整盘棋谱，引擎据此判断重复局面
+      fairy.sf.postMessage(`setoption name Skill Level value ${skill}`);
+      fairy.sf.postMessage(`position fen ${START_FEN}${moves ? ` moves ${moves}` : ""}`);
+      fairy.pending.push(gen);
+      fairy.sf.postMessage(`go movetime ${movetime}`);
+      return;
+    }
     const history = {};
     for (let p = 0; p <= state.plies.length; p++) {
       const key = XQ.keyOf(Position.fromFen(fenAt(p)));
@@ -1145,6 +1200,7 @@ const XQ = (() => {
     if (state.plies.length === 0 && !state.thinking) return;
     state.generation += 1; // 作废进行中的思考
     state.thinking = false;
+    stopFairy();
     if (state.plies.length > 0) {
       state.plies.pop();
       if (state.mode !== "both") {
@@ -1160,6 +1216,7 @@ const XQ = (() => {
   function newGame() {
     state.generation += 1;
     state.thinking = false;
+    stopFairy();
     state.plies = [];
     state.viewPly = 0;
     state.selected = null;
@@ -1179,6 +1236,7 @@ const XQ = (() => {
 
   buildBoard();
   newGame();
+  loadFairy();
 })();
 </script>
 </body>

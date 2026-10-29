@@ -30,12 +30,14 @@ description: 中国象棋对弈、复盘与棋局管理。当用户想下象棋�
 | `xq new [--fen FEN] [--force]` | 开新棋局（默认标准开局） |
 | `xq show` | 显示棋盘与轮走方/将军/终局状态 |
 | `xq move <记谱>` | 走一步，如 `xq move 炮二平五` |
-| `xq ai` | 让 AI 走一步 |
+| `xq ai` | 让 AI 走一步（装了 Pikafish 自动用它，远强于内置搜索） |
+| `xq engine [install]` | 查看 / 安装外部引擎 Pikafish |
 | `xq undo` | 悔一步棋 |
 | `xq legal` | 列出当前所有合法着法 |
 | `xq fen` | 输出当前局面 FEN |
 | `xq svg [--out 路径]` | 导出当前局面 SVG（含上一步高亮），输出文件路径 |
 | `xq history` | 显示完整棋谱 |
+| `xq play [--side black]` | 全屏鼠标对弈（交互式，你跑不了；用户嫌对话下棋慢时，建议他在自己终端里跑，存档共用、可回到对话复盘） |
 
 所有命令支持 `-n <名字>` 管理多盘棋（默认 `default`）。
 

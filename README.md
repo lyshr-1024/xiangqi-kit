@@ -21,6 +21,9 @@ LLM 纯靠文字记棋盘，走到二三十步就会记错子的位置、走出�
 ./skill/xq undo               # 悔棋
 ./skill/xq history            # 棋谱
 ./skill/xq fen                # 当前局面 FEN
+./skill/xq play               # 全屏棋盘：鼠标点选走子，AI 自动应手（--side black 执黑，--time 调 AI 限时）
+                              # macOS 上的 Ghostty/kitty/WezTerm 用图片画棋盘与圆形棋子（Kitty 图形协议），其余终端或 --text 用字符画
+./skill/xq engine install      # 下载 Pikafish 引擎到 ~/.xiangqi/engines/；装了以后 ai/play 自动用它（--engine builtin 换回内置）
 ```
 
 棋局存在 `~/.xiangqi/games/<name>.json`（`-n <名字>` 管理多盘棋，`XIANGQI_HOME` 可改存档目录），跨会话自动续棋。非法走法会报错并返回非零退出码。
@@ -38,6 +41,8 @@ skill/install.sh              # 安装到 ~/.claude/skills/xiangqi（含 vendore
 ## Web 版
 
 打开 `web/index.html` 就能玩——单文件、零依赖、无构建、可离线。
+
+通过 HTTP 访问（如 GitHub Pages，推送 `web/` 后由 `.github/workflows/pages.yml` 自动部署）时，AI 会换成 `web/engine/` 里的 Fairy-Stockfish（WASM + Pikafish 团队训练的象棋 NNUE，GPL-3.0），难度可选到"大师"。多线程 WASM 需要跨源隔离，静态托管设不了响应头，由 `coi-serviceworker.js` 补上；浏览器不支持或直接打开本地文件时自动用内置 JS 引擎。
 
 - 点击选子、高亮合法落点，走子动画，将军提示
 - AI 在 Web Worker 里搜索不卡 UI，难度三档（入门/普通/较强）

@@ -10,14 +10,30 @@ from xiangqi.board import RED
 from xiangqi.game import Game
 from xiangqi.notation import to_notation
 from xiangqi.render import render
+from xiangqi.uci import Engine, find_engine
 
 _RESULT_TEXT = {"red": "红方胜", "black": "黑方胜", "draw": "和棋"}
 _REASON_TEXT = {"checkmate": "将死", "stalemate": "困毙", "repetition": "三次重复局面"}
 
 
+def _home() -> Path:
+    return Path(os.environ.get("XIANGQI_HOME") or Path.home() / ".xiangqi")
+
+
 def _game_path(name: str) -> Path:
-    home = Path(os.environ.get("XIANGQI_HOME") or Path.home() / ".xiangqi")
-    return home / "games" / f"{name}.json"
+    return _home() / "games" / f"{name}.json"
+
+
+def _open_engine(choice: str) -> Engine | None:
+    """按 --engine 打开外部引擎；auto 时找不到就返回 None，交给内置搜索。"""
+    if choice == "builtin":
+        return None
+    path = find_engine(_home())
+    if path is None:
+        if choice == "pikafish":
+            raise ValueError("未找到 Pikafish，先运行 xq engine install")
+        return None
+    return Engine(path)
 
 
 def _load(name: str) -> Game:
@@ -111,12 +127,47 @@ def _cmd_ai(args: argparse.Namespace) -> int:
     game = _load(args.name)
     if game.result is not None:
         raise ValueError("棋局已结束")
-    result = search(game.position, time_limit=args.time, history=game.seen_positions)
-    notation = to_notation(game.position, result.move)
+    engine = _open_engine(args.engine)
+    if engine:
+        try:
+            move = engine.best_move(game, args.time)
+        finally:
+            engine.close()
+        detail = engine.name
+    else:
+        result = search(game.position, time_limit=args.time, history=game.seen_positions)
+        move = result.move
+        detail = f"内置，深度 {result.depth}，评分 {result.score:+d}，{result.nodes} 节点"
+    notation = to_notation(game.position, move)
     game.move(notation)
     game.save(_game_path(args.name))
-    print(f"AI 走：{notation}（深度 {result.depth}，评分 {result.score:+d}，{result.nodes} 节点）")
+    print(f"AI 走：{notation}（{detail}）")
     _print_state(game)
+    return 0
+
+
+def _cmd_play(args: argparse.Namespace) -> int:
+    from xiangqi.board import BLACK
+    from xiangqi.tui import play
+
+    engine = _open_engine(args.engine)
+    try:
+        play(_game_path(args.name), args.name, RED if args.side == "red" else BLACK, args.time,
+             graphics=not args.text, engine=engine)
+    finally:
+        if engine:
+            engine.close()
+    return 0
+
+
+def _cmd_engine(args: argparse.Namespace) -> int:
+    from xiangqi.uci import install
+
+    if args.action == "install":
+        print(f"已安装：{install(_home())}")
+    else:
+        path = find_engine(_home())
+        print(f"Pikafish：{path}" if path else "未安装 Pikafish，AI 使用内置搜索；运行 xq engine install 安装")
     return 0
 
 
@@ -140,17 +191,28 @@ def main(argv: list[str] | None = None) -> int:
     p_move.add_argument("notation", help="如 炮二平五 / 马8进7 / 前车进三")
     p_ai = add("ai", _cmd_ai, "让 AI 走一步")
     p_ai.add_argument("--time", type=float, default=2.0, help="单步限时秒数（默认 2）")
+    p_ai.add_argument("--engine", choices=["auto", "pikafish", "builtin"], default="auto",
+                      help="auto：装了 Pikafish 就用它，否则用内置搜索（默认）")
     add("undo", _cmd_undo, "悔一步棋")
     add("legal", _cmd_legal, "列出所有合法着法")
     add("fen", _cmd_fen, "输出当前 FEN")
     p_svg = add("svg", _cmd_svg, "导出当前局面 SVG，输出文件路径")
     p_svg.add_argument("--out", help="输出路径（默认 $XIANGQI_HOME/boards/<name>.svg）")
     add("history", _cmd_history, "显示棋谱")
+    p_play = add("play", _cmd_play, "全屏棋盘，鼠标点选走子，AI 自动应手")
+    p_play.add_argument("--side", choices=["red", "black"], default="red", help="你执哪方（默认红）")
+    p_play.add_argument("--time", type=float, default=2.0, help="AI 单步限时秒数（默认 2）")
+    p_play.add_argument("--text", action="store_true", help="强制用字符棋盘（默认在 Ghostty 等终端里用图片）")
+    p_play.add_argument("--engine", choices=["auto", "pikafish", "builtin"], default="auto",
+                        help="auto：装了 Pikafish 就用它，否则用内置搜索（默认）")
+    p_engine = sub.add_parser("engine", help="查看或安装外部引擎 Pikafish")
+    p_engine.add_argument("action", nargs="?", choices=["status", "install"], default="status")
+    p_engine.set_defaults(func=_cmd_engine)
 
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
